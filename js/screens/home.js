@@ -5,20 +5,26 @@
 import { h, icon, Logo, plural, longDate, greeting, toast, WEEKDAYS, DAY_LABEL } from '../ui.js';
 import { renderTree } from '../tree.js';
 import {
-  getState, getStats, simNow, keyOf, addDays, dayStatus, useForgiveCard, clearPendingAnim,
+  getState, getStats, simNow, keyOf, addDays, dayStatus, useForgiveCards, usableCards, clearPendingAnim,
   STAGE_NAMES, CARDS_PER_MONTH,
 } from '../state.js';
 import { getGoal, goalName } from '../goals.js';
 import { navigate, rerender } from '../router.js';
 import { openRegister } from '../sheets/register.js';
 import { openConfirm } from '../sheets/confirm.js';
+import { openCardsInfo } from '../sheets/cards.js';
 
 const ANIM_TOAST = {
   grow: 'Крок зараховано. Дерево виросло',
   step: 'Крок зараховано',
   recover: 'Крок зараховано. Дерево відновлюється',
   forgive: 'Картку використано. Дерево відновлюється',
+  forgive2: '2 картки використано. Дерево відновлюється',
 };
+
+const seriesWord = (n) => plural(n, ['день', 'дні', 'днів']);
+/** Label under the series number; a paused series keeps its number. */
+const seriesLabel = (st) => (st.paused ? 'серія на паузі' : plural(st.streak, ['день у серії', 'дні в серії', 'днів у серії']));
 
 function treeCaption(st) {
   if (st.wilt === 2) return 'Дерево привʼяло';
@@ -27,18 +33,25 @@ function treeCaption(st) {
   return `День ${st.dayNumber} · ${st.todayDone ? 'дерево росте' : 'чекає на крок'}`;
 }
 
-function treeNote(st) {
-  if (st.wilt) return `${st.missed} ${plural(st.missed, ['день', 'дні', 'днів'])} без кроку. Листя позеленіє з першим кроком.`;
-  if (st.recovering && st.todayDone) return 'Листя знову зеленіє. Дякуємо, що повернувся(-лася).';
-  if (st.recovering) return 'Пропуск закрито карткою. Серія збережена.';
+function treeNote(st, s) {
+  if (st.wilt) return `${st.missed} ${seriesWord(st.missed)} без кроку. Листя позеленіє з першим кроком.`;
+  if (st.recovering && st.todayDone) return `Листя знову зеленіє. Серія триває: ${st.streak} ${seriesWord(st.streak)}.`;
+  if (st.recovering) {
+    const n = s.lastForgive?.day === st.today ? s.lastForgive.n : 1;
+    return n > 1 ? 'Пропущені дні закрито картками. Серія триває.' : 'Пропущений день закрито карткою. Серія триває.';
+  }
   if (st.todayDone) return 'Сьогоднішній крок зараховано.';
   return 'Сьогоднішній крок додасть дереву росту.';
 }
 
-function Stat(ico, value, label) {
-  return h('div', { class: 'stat' },
+function Stat(ico, value, label, onClick) {
+  const body = [
     h('p', { class: 'stat-num' }, icon(ico, 18), h('span', {}, String(value))),
-    h('p', { class: 'stat-label' }, label));
+    h('p', { class: 'stat-label' }, label),
+  ];
+  if (!onClick) return h('div', { class: 'stat' }, body);
+  return h('button', { class: 'stat stat--btn', type: 'button', onClick, 'aria-label': `${value} ${label}. Що це?` },
+    body, h('span', { class: 'stat-more', 'aria-hidden': 'true' }, icon('info', 16)));
 }
 
 function WeekStrip() {
@@ -86,25 +99,31 @@ export function HomeScreen() {
       h('span', { class: 'tree-cap' }, treeCaption(st)),
       h('span', { class: 'tree-stage' }, STAGE_NAMES[st.stage])),
     treeHost,
-    h('p', { class: 'tree-note' }, treeNote(st)));
+    h('p', { class: 'tree-note' }, treeNote(st, s)));
 
   const stats = h('div', { class: 'stats' },
-    Stat('flame', st.streak, wilted && !st.streak ? 'серія на паузі' : plural(st.streak, ['день поспіль', 'дні поспіль', 'днів поспіль'])),
+    Stat('flame', st.streak, seriesLabel(st)),
     Stat('steps', st.totalSteps, plural(st.totalSteps, ['крок усього', 'кроки усього', 'кроків усього'])),
-    Stat('card', `${st.cardsLeft}/${CARDS_PER_MONTH}`, 'картки прощення'));
+    Stat('card', `${st.cardsLeft}/${CARDS_PER_MONTH}`, 'картки прощення', openCardsInfo));
 
   const startDaily = (ret) => navigate(`/step/${goal.id}?mode=daily${ret ? '&return=1' : ''}`);
 
   let action;
   if (wilted) {
-    const cardBtn = h('button', { class: 'btn btn--secondary', type: 'button', disabled: !st.cardsLeft },
-      st.cardsLeft ? `Використати картку прощення (${st.cardsLeft} з ${CARDS_PER_MONTH})` : 'Картки прощення закінчились');
-    cardBtn.addEventListener('click', () => { if (useForgiveCard()) rerender(); });
+    const n = usableCards(st);
+    const cardLabel = n >= 2 ? `Використати ${n} картки (${n} дні)` : n === 1 ? 'Використати 1 картку (1 день)' : 'Картки прощення закінчились';
+    const cardBtn = h('button', { class: 'btn btn--secondary btn--two-line', type: 'button', disabled: !n },
+      h('span', {}, cardLabel),
+      h('small', {}, n ? 'Одна картка = один пропущений день' : 'Нові картки зʼявляться першого числа'));
+    cardBtn.addEventListener('click', () => { if (useForgiveCards(n)) rerender(); });
+    const series = st.paused
+      ? `Серія ${st.streak} ${seriesWord(st.streak)} на паузі. Крок сьогодні продовжить її: ${st.streak} → ${st.streak + 1}.`
+      : 'Серія почнеться знову з першого кроку.';
     action = h('section', { class: 'card return-card' },
       h('p', { class: 'return-text' }, 'Дерево трохи привʼяло. Так буває. Повернутися можна за 2 хвилини.'),
+      h('p', { class: 'series-note' }, icon('flame', 16), series),
       h('button', { class: 'btn btn--primary', type: 'button', onClick: () => startDaily(true) }, 'Зробити крок на 2 хв'),
-      cardBtn,
-      st.cardsLeft ? h('p', { class: 'micro center' }, 'Картка збереже серію, а дерево відновиться без кроку.') : h('p', { class: 'micro center' }, 'Нові картки зʼявляться першого числа.'));
+      cardBtn);
   } else if (!st.todayDone) {
     action = h('section', { class: 'card step-card' },
       h('div', { class: 'step-card-head' },
@@ -167,7 +186,8 @@ export function HomeScreen() {
         timers.push(setTimeout(() => {
           const t = renderTree(treeHost, { stage: anim.to.stage, wilt: anim.to.wilt });
           timers.push(setTimeout(() => t.celebrate(), anim.kind === 'grow' ? 600 : 900));
-          toast(ANIM_TOAST[anim.kind] || ANIM_TOAST.step, { iconName: anim.kind === 'forgive' ? 'card' : 'check' });
+          const key = anim.kind === 'forgive' && s.lastForgive?.n > 1 ? 'forgive2' : anim.kind;
+          toast(ANIM_TOAST[key] || ANIM_TOAST.step, { iconName: anim.kind === 'forgive' ? 'card' : 'check' });
         }, 450));
       } else {
         renderTree(treeHost, { stage: st.stage, wilt: st.wilt });

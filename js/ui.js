@@ -89,7 +89,7 @@ export function Logo() {
 }
 
 /** Tiny version label. Triple tap opens the moderator panel (wired in app.js). */
-export const Version = () => h('span', { class: 'version' }, 'v1.1');
+export const Version = () => h('span', { class: 'version' }, 'v2.0');
 
 export const ProtoNote = (text = 'Прототип: гроші не списуються') => h('p', { class: 'proto-note' }, icon('info', 15), text);
 

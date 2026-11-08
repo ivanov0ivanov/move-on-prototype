@@ -1,8 +1,9 @@
 /**
- * "Як зарахувати крок?" — confirming a real-world step in one tap. Integrations are imitated.
+ * "Як зарахувати крок?" — confirming a real-world step. Integrations are imitated.
+ * The first automatic check asks for (imitated) permission; a found lesson is credited only on an explicit tap.
  */
-import { h, icon, openSheet } from '../ui.js';
-import { getState, completeStep } from '../state.js';
+import { h, icon, openSheet, ProtoNote } from '../ui.js';
+import { getState, completeStep, allowAuto } from '../state.js';
 import { getGoal } from '../goals.js';
 
 /**
@@ -12,6 +13,7 @@ export function openConfirm({ onDone } = {}) {
   const goal = getGoal(getState().goalId);
   let sheet;
   let busy = false;
+  const body = h('div', { class: 'sheet-body' });
 
   const options = [
     { method: 'auto', ico: 'sync', title: 'Автоматично: Apple Health / Duolingo (демо)', sub: `Підтягнемо ${goal.offline.auto}, нічого не треба вводити` },
@@ -19,39 +21,76 @@ export function openConfirm({ onDone } = {}) {
     { method: 'mark', ico: 'mark', title: 'Просто відмітити', sub: 'Ми тобі довіряємо' },
   ];
 
-  function choose(opt, row) {
-    if (busy) return;
+  const finish = (method) => {
+    completeStep(method);
+    sheet.close('done');
+    onDone?.();
+  };
+
+  function runAuto(row, rows) {
     busy = true;
+    rows.forEach((r) => { if (r !== row) r.disabled = true; });
     row.classList.add('is-busy');
     const status = row.querySelector('.opt-sub');
-    const ms = opt.method === 'auto' ? 1100 : opt.method === 'photo' ? 700 : 250;
-    if (opt.method === 'auto') status.textContent = `Шукаємо в ${goal.offline.auto}…`;
-    if (opt.method === 'photo') status.textContent = 'Фото додано (демо)';
+    status.textContent = `Шукаємо в ${goal.offline.auto}…`;
     setTimeout(() => {
-      if (opt.method === 'auto') status.textContent = `Знайдено: ${goal.offline.found}`;
       row.classList.remove('is-busy');
       row.classList.add('is-ok');
-      setTimeout(() => {
-        completeStep(opt.method);
-        sheet.close('done');
-        onDone?.();
-      }, opt.method === 'auto' ? 650 : 300);
-    }, ms);
+      status.textContent = `Знайдено: ${goal.offline.found}`;
+      body.append(h('div', { class: 'found-actions' },
+        h('button', { class: 'btn btn--primary', type: 'button', onClick: () => finish('auto') }, 'Зарахувати крок'),
+        h('button', { class: 'btn btn--text', type: 'button', onClick: () => sheet.close('cancel') }, 'Скасувати')));
+    }, 1100);
   }
 
-  const list = h('div', { class: 'opt-list' }, options.map((opt) => {
-    const row = h('button', { type: 'button', class: 'opt' },
-      h('span', { class: 'opt-ico' }, icon(opt.ico, 24)),
-      h('span', { class: 'opt-text' }, h('span', { class: 'opt-title' }, opt.title), h('span', { class: 'opt-sub' }, opt.sub)),
-      h('span', { class: 'opt-state' }, icon('check', 18)));
-    row.addEventListener('click', () => choose(opt, row));
-    return row;
-  }));
+  function runQuick(opt, row) {
+    busy = true;
+    row.classList.add('is-busy');
+    if (opt.method === 'photo') row.querySelector('.opt-sub').textContent = 'Фото додано (демо)';
+    setTimeout(() => {
+      row.classList.remove('is-busy');
+      row.classList.add('is-ok');
+      setTimeout(() => finish(opt.method), 300);
+    }, opt.method === 'photo' ? 700 : 250);
+  }
 
-  const content = h('div', { class: 'sheet-body' },
-    h('h2', { class: 'h2' }, 'Як зарахувати крок?'),
-    h('p', { class: 'sheet-sub' }, `Наприклад, ${goal.offline.label}. Обери спосіб, вистачить одного дотику.`),
-    list);
-  sheet = openSheet({ content, label: 'Підтвердження кроку' });
+  function renderOptions({ note = '', autoStart = false } = {}) {
+    busy = false;
+    const rows = options.map((opt) => {
+      const row = h('button', { type: 'button', class: 'opt', dataset: { method: opt.method } },
+        h('span', { class: 'opt-ico' }, icon(opt.ico, 24)),
+        h('span', { class: 'opt-text' }, h('span', { class: 'opt-title' }, opt.title), h('span', { class: 'opt-sub' }, opt.sub)),
+        h('span', { class: 'opt-state' }, icon('check', 18)));
+      row.addEventListener('click', () => {
+        if (busy) return;
+        if (opt.method !== 'auto') { runQuick(opt, row); return; }
+        if (getState().autoAllowed) runAuto(row, rows); else renderPermission();
+      });
+      return row;
+    });
+    // replaceChildren() would print a literal "null", so optional nodes are filtered out.
+    body.replaceChildren(...[
+      h('h2', { class: 'h2' }, 'Як зарахувати крок?'),
+      h('p', { class: 'sheet-sub' }, `Наприклад, ${goal.offline.label}. Обери спосіб.`),
+      note && h('p', { class: 'later-note' }, icon('info', 16), note),
+      h('div', { class: 'opt-list' }, rows),
+    ].filter(Boolean));
+    if (autoStart) runAuto(rows[0], rows);
+  }
+
+  function renderPermission() {
+    body.replaceChildren(
+      h('div', { class: 'perm' },
+        h('span', { class: 'perm-ico' }, icon('sync', 28)),
+        h('h2', { class: 'h2' }, 'Дозволити MOVE ON бачити уроки Duolingo і тренування Apple Health?'),
+        h('p', { class: 'sheet-sub' }, 'Лише факт заняття й тривалість.')),
+      h('div', { class: 'deposit-actions' },
+        h('button', { class: 'btn btn--primary', type: 'button', onClick: () => { allowAuto(true); renderOptions({ autoStart: true }); } }, 'Дозволити (демо)'),
+        h('button', { class: 'btn btn--secondary', type: 'button', onClick: () => renderOptions({ note: 'Без доступу крок можна підтвердити фото або просто відмітити.' }) }, 'Ні')),
+      ProtoNote('Прототип: справжнього доступу до Duolingo й Apple Health немає'));
+  }
+
+  renderOptions();
+  sheet = openSheet({ content: body, label: 'Підтвердження кроку' });
   return sheet;
 }

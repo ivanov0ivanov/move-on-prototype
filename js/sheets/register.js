@@ -12,9 +12,11 @@ export function openRegister({ onDone } = {}) {
   let busy = false;
 
   const nameInput = h('input', {
-    class: 'input', id: 'reg-name', type: 'text', autocomplete: 'given-name', autocapitalize: 'words',
-    enterkeyhint: 'done', maxlength: '24', placeholder: 'Імʼя',
+    class: 'input', id: 'reg-name', type: 'text', autocomplete: 'off', autocapitalize: 'words',
+    enterkeyhint: 'done', maxlength: '24', placeholder: 'Імʼя', value: '',
   });
+  // v2: always start empty, even if the browser tries to restore a previous value.
+  nameInput.value = '';
   const emailInput = h('input', {
     class: 'input', id: 'reg-email', type: 'email', inputmode: 'email', autocomplete: 'email',
     autocapitalize: 'none', autocorrect: 'off', enterkeyhint: 'go', placeholder: 'name@example.com',
@@ -49,7 +51,7 @@ export function openRegister({ onDone } = {}) {
     emailInput.focus();
   });
 
-  const later = h('button', { class: 'btn btn--text', type: 'button' }, 'Пізніше');
+  const later = h('button', { class: 'btn btn--secondary', type: 'button' }, 'Пізніше');
   later.addEventListener('click', () => {
     sheet.close('later');
     onDone?.(false);
@@ -57,7 +59,8 @@ export function openRegister({ onDone } = {}) {
 
   const content = h('div', { class: 'sheet-body' },
     h('h2', { class: 'h2' }, 'Збережемо твоє дерево'),
-    h('p', { class: 'sheet-sub' }, 'Щоб прогрес не загубився, якщо зміниш телефон. Пароль не потрібен.'),
+    h('p', { class: 'later-note' }, icon('lock', 16), 'Можна пізніше: без входу прогрес лишається на цьому телефоні.'),
+    h('p', { class: 'sheet-sub' }, 'Вхід потрібен, щоб прогрес не загубився, якщо зміниш телефон. Пароль не потрібен.'),
     h('label', { class: 'field-label', for: 'reg-name' }, 'Як до тебе звертатися?'),
     nameInput,
     h('div', { class: 'auth-list' }, apple, google, email, emailBox),

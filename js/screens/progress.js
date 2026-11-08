@@ -63,7 +63,7 @@ export function ProgressScreen() {
     h('div', { class: 'stats stats--big' },
       h('div', { class: 'stat' }, h('p', { class: 'stat-num' }, icon('steps', 18), h('span', {}, String(st.totalSteps))), h('p', { class: 'stat-label' }, plural(st.totalSteps, ['крок усього', 'кроки усього', 'кроків усього']))),
       h('div', { class: 'stat' }, h('p', { class: 'stat-num' }, icon('flame', 18), h('span', {}, String(st.best))), h('p', { class: 'stat-label' }, 'найкраща серія')),
-      h('div', { class: 'stat' }, h('p', { class: 'stat-num' }, icon('today', 18), h('span', {}, String(st.streak))), h('p', { class: 'stat-label' }, 'поточна серія'))),
+      h('div', { class: 'stat' }, h('p', { class: 'stat-num' }, icon('today', 18), h('span', {}, String(st.streak))), h('p', { class: 'stat-label' }, st.paused ? 'поточна серія, на паузі' : 'поточна серія'))),
     Calendar(s),
     h('section', { class: 'card history-card' },
       h('div', { class: 'card-head' }, h('p', { class: 'card-title' }, 'Як росте дерево'), nextStage ? h('p', { class: 'card-aside' }, `далі: ${nextStage.toLowerCase()}`) : null),

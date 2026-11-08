@@ -1,19 +1,22 @@
 /**
- * Day-3 offer: optional deposit ("цілі ваги") with transparent rules and an equal-weight "Не зараз".
+ * Day-3 offer: optional deposit ("Поставиш на себе?") with concrete rules, an explicit confirmation sheet
+ * and an equal-weight "Не зараз".
  */
-import { h, icon, plural, shortDate, toast, ProtoNote } from '../ui.js';
+import { h, icon, plural, shortDate, toast, openSheet, ProtoNote } from '../ui.js';
 import {
-  getState, getStats, acceptDeposit, setDepositOffer, depositSummary, DEPOSIT_AMOUNTS, DEPOSIT_PARTS, CARDS_PER_MONTH,
+  getState, getStats, acceptDeposit, setDepositOffer, depositSummary,
+  DEPOSIT_AMOUNTS, DEPOSIT_PARTS, CARDS_PER_MONTH, WEEK_MIN_DAYS,
 } from '../state.js';
 import { navigate } from '../router.js';
 
-/** The deposit rules: shared by the offer and the Сейф tab. */
+/** The deposit rules: the single source of the rule copy for the offer and the Сейф tab. */
 export function DepositRules() {
   const rules = [
-    ['bank', 'Гроші лежать на окремому рахунку банку-партнера (демо).'],
-    ['coins', `Повертаються щотижня частинами за виконані кроки, по 1/${DEPOSIT_PARTS} суми на тиждень.`],
-    ['card', `${CARDS_PER_MONTH} картки прощення на місяць. Без картки частина пропущеного тижня йде на благодійність.`],
-    ['undo', 'Повернути гроші можна в один тап.'],
+    ['bank', 'Гроші лежать на окремому рахунку банку-партнера. Назву банку й договір покажемо перед першим внеском (у прототипі демо).'],
+    ['coins', `Щотижня повертається 1/${DEPOSIT_PARTS} суми, якщо в тижні ${WEEK_MIN_DAYS} днів із кроками.`],
+    ['card', `День без кроку можна закрити карткою прощення: ${CARDS_PER_MONTH} на місяць, одна картка = один день.`],
+    ['heart', `Якщо тиждень не набрав ${WEEK_MIN_DAYS} днів, його 1/${DEPOSIT_PARTS} іде у фонд, який ти обереш.`],
+    ['undo', 'Забрати все можна будь-коли у вкладці «Сейф».'],
   ];
   return h('section', { class: 'rules' },
     h('p', { class: 'rules-title' }, 'Як це працює'),
@@ -44,15 +47,43 @@ function Confirmation(amount) {
   return h('div', { class: 'deposit-done' },
     Vault({ drop: true }),
     h('h1', { class: 'display center' }, `${amount} грн у сейфі`),
-    h('p', { class: 'lead center' }, `Перше повернення: ${sum.part} грн, ${shortDate(sum.nextDay)}. Якщо тиждень пройде з кроками.`),
+    h('p', { class: 'lead center' }, `Перше повернення: ${sum.part} грн, ${shortDate(sum.nextDay)}, якщо тиждень набере ${WEEK_MIN_DAYS} днів із кроками.`),
     h('ul', { class: 'done-list' },
-      h('li', {}, icon('coins', 20), `Щотижня повертається до ${sum.part} грн`),
-      h('li', {}, icon('card', 20), `${CARDS_PER_MONTH} картки прощення на місяць`),
-      h('li', {}, icon('undo', 20), 'Повернути все можна у вкладці «Сейф»')),
+      h('li', {}, icon('coins', 20), `${sum.part} грн повертається за кожен тиждень із ${WEEK_MIN_DAYS} днями кроків`),
+      h('li', {}, icon('card', 20), `Картка прощення закриває один день, ${CARDS_PER_MONTH} на місяць`),
+      h('li', {}, icon('undo', 20), 'Забрати все можна будь-коли у вкладці «Сейф»')),
     h('div', { class: 'deposit-actions' },
       h('button', { class: 'btn btn--primary', type: 'button', onClick: () => navigate('/safe') }, 'Відкрити сейф'),
       h('button', { class: 'btn btn--secondary', type: 'button', onClick: () => navigate('/home') }, 'На головну')),
     ProtoNote());
+}
+
+/**
+ * "Підтвердь внесок": the last explicit check before money moves (imitated).
+ * @param {number} amount
+ * @param {() => void} onConfirm
+ */
+function openDepositConfirm(amount, onConfirm) {
+  const part = Math.round(amount / DEPOSIT_PARTS);
+  let sheet;
+  const terms = [
+    ['steps', `Тиждень зараховано, якщо в ньому ${WEEK_MIN_DAYS} днів із кроками`],
+    ['card', `Картка прощення закриває один день, ${CARDS_PER_MONTH} на місяць`],
+    ['heart', `Тиждень без ${WEEK_MIN_DAYS} днів: ${part} грн іде у фонд, який ти обереш`],
+    ['undo', 'Забрати все можна будь-коли у вкладці «Сейф»'],
+  ];
+  const content = h('div', { class: 'sheet-body' },
+    h('h2', { class: 'h2' }, 'Підтвердь внесок'),
+    h('div', { class: 'confirm-amount' },
+      h('p', { class: 'confirm-sum' }, `${amount} грн`),
+      h('p', { class: 'confirm-sub' }, `повернення по ${part} грн щотижня, ${DEPOSIT_PARTS} тижні · банк-партнер (демо)`)),
+    h('p', { class: 'terms-title' }, 'Умови'),
+    h('ul', { class: 'terms' }, terms.map(([ico, text]) => h('li', {}, icon(ico, 18), h('span', {}, text)))),
+    h('div', { class: 'deposit-actions' },
+      h('button', { class: 'btn btn--primary', type: 'button', onClick: () => { sheet.close('done'); onConfirm(); } }, 'Підтвердити (демо)'),
+      h('button', { class: 'btn btn--secondary', type: 'button', onClick: () => sheet.close('back') }, 'Назад')),
+    ProtoNote());
+  sheet = openSheet({ content, label: 'Підтвердження внеску' });
 }
 
 export function DepositScreen() {
@@ -80,9 +111,9 @@ export function DepositScreen() {
 
   const offer = h('div', { class: 'deposit-offer' },
     h('span', { class: 'streak-badge' }, icon('flame', 18), badge),
-    h('h1', { class: 'display' }, 'Хочеш додати цілі ваги?'),
-    h('p', { class: 'lead' }, 'Поклади невелику суму в сейф. Вона повертається тобі частинами, поки робиш кроки.'),
-    h('div', { class: 'amounts', role: 'radiogroup', 'aria-label': 'Сума депозиту' }, chips),
+    h('h1', { class: 'display' }, 'Поставиш на себе?'),
+    h('p', { class: 'lead' }, `Поклади невелику суму в сейф. Вона повертається тобі щотижня, коли в тижні є ${WEEK_MIN_DAYS} днів із кроками.`),
+    h('div', { class: 'amounts', role: 'radiogroup', 'aria-label': 'Сума внеску' }, chips),
     DepositRules(),
     h('div', { class: 'deposit-actions' },
       primary,
@@ -99,9 +130,11 @@ export function DepositScreen() {
   const el = h('section', { class: 'screen screen--deposit' }, offer);
   primary.addEventListener('click', () => {
     if (!amount) return;
-    acceptDeposit(amount);
-    el.replaceChildren(Confirmation(amount));
-    el.scrollTop = 0;
+    openDepositConfirm(amount, () => {
+      acceptDeposit(amount);
+      el.replaceChildren(Confirmation(amount));
+      el.scrollTop = 0;
+    });
   });
   return { el };
 }

@@ -25,7 +25,7 @@ export function StartScreen() {
     h('header', { class: 'topbar' }, Logo()),
     h('div', { class: 'start-hero' },
       h('h1', { class: 'display' }, 'Що хочеш зрушити сьогодні?'),
-      h('p', { class: 'lead' }, 'Одна хвилина. Один крок. Без реєстрації.')),
+      h('p', { class: 'lead' }, 'Перший крок — без реєстрації. Одна хвилина.')),
     h('div', { class: 'goal-grid' }, GOALS.map(GoalTile)),
     h('footer', { class: 'start-foot' },
       h('p', {}, 'Торкнись цілі, і крок почнеться одразу.'),

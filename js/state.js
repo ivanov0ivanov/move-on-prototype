@@ -8,11 +8,14 @@ const KEY = 'moveon.state.v1';
 /** Tree stage by number of days with a completed step (index = days, capped). */
 export const STAGE_BY_DONE = [0, 1, 2, 3, 4, 4, 5, 6];
 export const STAGE_NAMES = ['Насінина', 'Паросток', 'Росток', 'Деревце', 'Молоде дерево', 'Повна крона', 'Перші плоди'];
+/** Forgiveness cards per calendar month; one card closes exactly one missed day. */
 export const CARDS_PER_MONTH = 2;
-/** One forgiveness card closes up to this many most recent missed days. */
-export const CARD_COVERS_DAYS = 2;
+/** A series survives up to this many missed days in a row (≈48 h); it restarts after a longer gap. */
+export const GRACE_DAYS = 2;
 /** Deposit is returned in this many weekly parts. */
 export const DEPOSIT_PARTS = 4;
+/** A deposit week counts (its part is returned) if it has at least this many days with a step or a card. */
+export const WEEK_MIN_DAYS = 5;
 export const DEPOSIT_AMOUNTS = [100, 200, 300];
 
 const blank = () => ({
@@ -29,6 +32,8 @@ const blank = () => ({
   depositOffer: 'none', // none | due | shown | declined | accepted
   firstStep: null,
   recoveredOn: null,
+  lastForgive: null, // { day, n } — cards used today, for Home copy
+  autoAllowed: false, // imitated Duolingo / Apple Health permission
   pendingAnim: null,
 });
 
@@ -81,14 +86,21 @@ export const todayKey = () => keyOf(simNow());
 
 /**
  * Derived progress values for the current simulated day.
- * @returns {{started:boolean,today:string,stage:number,wilt:number,streak:number,best:number,doneCount:number,
- *   totalSteps:number,todayDone:boolean,missed:number,dayNumber:number,cardsLeft:number,recovering:boolean}}
+ *
+ * Series rule: `streak` counts days with a step. A forgiveness card bridges a missed day (no increment);
+ * up to GRACE_DAYS missed days in a row only pause the series; a longer gap restarts it.
+ * @returns {{started:boolean,today:string,stage:number,wilt:number,streak:number,paused:boolean,graceLeft:number,
+ *   best:number,doneCount:number,totalSteps:number,todayDone:boolean,missed:number,dayNumber:number,
+ *   cardsLeft:number,recovering:boolean}}
  */
 export function getStats(s = state) {
   const today = todayKey();
   const used = s.cardsUsed[today.slice(0, 7)] || 0;
   const cardsLeft = Math.max(0, CARDS_PER_MONTH - used);
-  const base = { started: false, today, stage: 0, wilt: 0, streak: 0, best: 0, doneCount: 0, totalSteps: s.totalSteps, todayDone: false, missed: 0, dayNumber: 0, cardsLeft, recovering: false };
+  const base = {
+    started: false, today, stage: 0, wilt: 0, streak: 0, paused: false, graceLeft: GRACE_DAYS, best: 0, doneCount: 0,
+    totalSteps: s.totalSteps, todayDone: false, missed: 0, dayNumber: 0, cardsLeft, recovering: false,
+  };
   if (!s.startDay || diffDays(s.startDay, today) < 0) return base;
 
   const kept = (k) => Boolean(s.days[k]);
@@ -97,13 +109,20 @@ export function getStats(s = state) {
   let missed = 0;
   for (let k = addDays(today, -1); diffDays(s.startDay, k) >= 0 && !kept(k); k = addDays(k, -1)) missed++;
 
-  let streak = 0;
-  for (let k = kept(today) ? today : addDays(today, -1); kept(k); k = addDays(k, -1)) streak++;
-
-  let best = 0;
   let run = 0;
+  let best = 0;
+  let gap = 0;
   for (let k = s.startDay; diffDays(k, today) >= 0; k = addDays(k, 1)) {
-    run = kept(k) ? run + 1 : 0;
+    const status = s.days[k]?.status;
+    if (status === 'done') {
+      run += 1;
+      gap = 0;
+    } else if (status === 'forgiven') {
+      gap = 0;
+    } else if (k !== today) {
+      gap += 1;
+      if (gap > GRACE_DAYS) run = 0;
+    }
     best = Math.max(best, run);
   }
 
@@ -113,7 +132,9 @@ export function getStats(s = state) {
     started: true,
     stage: STAGE_BY_DONE[Math.min(doneCount, STAGE_BY_DONE.length - 1)],
     wilt: todayDone ? 0 : Math.min(2, missed),
-    streak,
+    streak: run,
+    paused: !todayDone && gap > 0 && run > 0,
+    graceLeft: Math.max(0, GRACE_DAYS - gap),
     best,
     doneCount,
     todayDone,
@@ -136,30 +157,43 @@ export function dayStatus(k, s = state) {
 export const hasActiveDeposit = (s = state) => s.deposit?.status === 'active';
 
 /**
- * Weekly return math for the deposit: each 7-day block returns 1/DEPOSIT_PARTS of the amount
- * proportionally to kept days (done or forgiven); the rest of that part goes to charity.
+ * Weekly return math for the deposit: each 7-day block from the deposit day is one week.
+ * A week with ≥ WEEK_MIN_DAYS kept days (step or card) returns 1/DEPOSIT_PARTS of the amount;
+ * otherwise that part goes to the fund the person chose.
  */
 export function depositSummary(s = state) {
   const d = s.deposit;
   if (!d) return null;
-  const end = d.status === 'returned' ? d.closedDay : todayKey();
+  const today = todayKey();
+  const end = d.status === 'returned' ? d.closedDay : today;
   const part = Math.round(d.amount / DEPOSIT_PARTS);
+  const keptIn = (from, n) => {
+    let c = 0;
+    for (let i = 0; i < n; i++) if (s.days[addDays(from, i)]) c++;
+    return c;
+  };
   const weeksDone = Math.min(DEPOSIT_PARTS, Math.max(0, Math.floor(diffDays(d.startDay, end) / 7)));
   let returned = 0;
-  let charity = 0;
+  let fund = 0;
   const weekly = [];
   for (let w = 0; w < weeksDone; w++) {
-    let kept = 0;
-    for (let i = 0; i < 7; i++) if (s.days[addDays(d.startDay, w * 7 + i)]) kept++;
-    const back = Math.round((part * kept) / 7);
-    returned += back;
-    charity += part - back;
-    weekly.push({ day: addDays(d.startDay, (w + 1) * 7), back, charity: part - back, kept });
+    const kept = keptIn(addDays(d.startDay, w * 7), 7);
+    const ok = kept >= WEEK_MIN_DAYS;
+    if (ok) returned += part; else fund += part;
+    weekly.push({ day: addDays(d.startDay, (w + 1) * 7), kept, ok, amount: part });
   }
   const paidOut = d.events.filter((e) => e.kind === 'out').reduce((sum, e) => sum + e.amount, 0);
-  const balance = d.status === 'returned' ? 0 : d.amount - returned - charity;
-  const nextDay = d.status === 'active' && weeksDone < DEPOSIT_PARTS ? addDays(d.startDay, (weeksDone + 1) * 7) : null;
-  return { amount: d.amount, part, returned: returned + paidOut, charity, balance, nextDay, weekly, status: d.status };
+  const running = d.status === 'active' && weeksDone < DEPOSIT_PARTS;
+  const weekStart = addDays(d.startDay, weeksDone * 7);
+  const elapsed = running ? Math.min(7, diffDays(weekStart, today) + 1) : 0;
+  const weekKept = running ? keptIn(weekStart, elapsed) : 0;
+  const weekLeft = running ? 7 - elapsed : 0;
+  return {
+    amount: d.amount, part, returned: returned + paidOut, fund, weekly, status: d.status,
+    balance: d.status === 'returned' ? 0 : d.amount - returned - fund,
+    nextDay: running ? addDays(d.startDay, (weeksDone + 1) * 7) : null,
+    weekKept, weekLeft, weekReachable: weekKept + weekLeft >= WEEK_MIN_DAYS,
+  };
 }
 
 /* ---------- actions ---------- */
@@ -213,21 +247,35 @@ export function completeStep(method) {
   });
 }
 
-/** Uses one forgiveness card for the most recent missed days. Returns false if not possible. */
-export function useForgiveCard() {
+/** How many cards can be used right now: one per missed day, limited by the cards left. */
+export const usableCards = (st = getStats()) => Math.min(st.cardsLeft, st.missed);
+
+/**
+ * Uses forgiveness cards for the most recent missed days, one card per day.
+ * @param {number} n cards requested
+ * @returns {number} cards actually used (0 if not possible)
+ */
+export function useForgiveCards(n) {
   const before = getStats();
-  if (!before.cardsLeft || !before.missed) return false;
+  const count = Math.min(n, usableCards(before));
+  if (count < 1) return 0;
   mutate((s) => {
     const today = todayKey();
-    const n = Math.min(before.missed, CARD_COVERS_DAYS);
-    for (let i = 1; i <= n; i++) s.days[addDays(today, -i)] = { status: 'forgiven' };
+    for (let i = 1; i <= count; i++) s.days[addDays(today, -i)] = { status: 'forgiven' };
     const month = today.slice(0, 7);
-    s.cardsUsed[month] = (s.cardsUsed[month] || 0) + 1;
+    s.cardsUsed[month] = (s.cardsUsed[month] || 0) + count;
     s.recoveredOn = today;
+    s.lastForgive = { day: today, n: count };
     s.pendingAnim = { from: { stage: before.stage, wilt: before.wilt }, to: { stage: before.stage, wilt: 0 }, kind: 'forgive' };
-    if (hasActiveDeposit(s)) s.deposit.events.push({ day: today, kind: 'card', text: 'Пропуск закрито карткою прощення' });
+    if (hasActiveDeposit(s)) {
+      s.deposit.events.push({ day: today, kind: 'card', text: count === 1 ? 'Пропущений день закрито карткою' : `${count} пропущені дні закрито картками` });
+    }
   });
-  return true;
+  return count;
+}
+
+export function allowAuto(allowed) {
+  mutate((s) => { s.autoAllowed = allowed; });
 }
 
 export const clearPendingAnim = () => mutate((s) => { s.pendingAnim = null; });
@@ -281,6 +329,7 @@ export function rewindToDay(n) {
     s.totalSteps = n - 1;
     s.cardsUsed = {};
     s.recoveredOn = null;
+    s.lastForgive = null;
     s.pendingAnim = null;
     if (hasActiveDeposit(s) && n > 3) {
       const shift = diffDays(s.deposit.startDay, addDays(start, 2));

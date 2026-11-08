@@ -41,7 +41,7 @@ export function openModerator() {
     return h('section', { class: 'svc-sec' },
       h('p', { class: 'svc-title' }, 'Сценарій'),
       h('p', { class: 'svc-status' }, st.started
-        ? `День ${st.dayNumber} · серія ${st.streak} · стадія ${st.stage} · вʼянення ${st.wilt} · ${dayMonth(todayKey())}${s.dayOffset ? ` (+${s.dayOffset} дн.)` : ''} · ${dep}`
+        ? `День ${st.dayNumber} · серія ${st.streak}${st.paused ? ' (пауза)' : ''} · стадія ${st.stage} · вʼянення ${st.wilt} · ${dayMonth(todayKey())}${s.dayOffset ? ` (+${s.dayOffset} дн.)` : ''} · ${dep}`
         : 'Новий користувач: перший крок ще не зроблено'),
       h('div', { class: 'svc-grid' },
         scenario('Скинути все', 'новий користувач', () => {
