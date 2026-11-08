@@ -944,6 +944,20 @@ input, textarea, select { font: inherit; font-size: 17px; color: inherit; }
 .rule-ico { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 12px; background: var(--beige); color: var(--navy); }
 
 .deposit-actions { display: grid; grid-template-columns: 1fr; gap: 10px; margin-top: 22px; }
+/* Sticky decision footer (deposit offer + confirmation sheet); bleeds to the edges of its scroll container. */
+.sticky-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  gap: 8px;
+  margin: 18px -20px 0;
+  padding: 12px 20px calc(8px + var(--safe-bottom));
+  background: var(--cream);
+  box-shadow: 0 -1px 0 rgba(217, 209, 186, 0.9), 0 -16px 24px -20px rgba(28, 27, 46, 0.45);
+}
+.sticky-actions .proto-note { margin-top: 2px; }
+.screen--deposit:has(.sticky-actions) { padding-bottom: 0; }
+.sheet:has(.sticky-actions) { padding-bottom: 0; }
 
 .vault { width: 150px; height: 140px; margin: 0 auto 6px; }
 .vault svg { width: 100%; height: 100%; overflow: visible; }
@@ -1121,6 +1135,20 @@ input, textarea, select { font: inherit; font-size: 17px; color: inherit; }
 .opt[disabled] { opacity: 0.45; pointer-events: none; }
 
 .w5-row { display: flex; gap: 6px; margin: 10px 0 8px; }
+.cancel-box { display: grid; gap: 6px; margin-top: 12px; }
+.stake-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: var(--beige);
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+.stake-note .ico { flex: none; margin-top: 1px; }
 .w5 { flex: 1; height: 8px; border-radius: 8px; background: var(--beige); }
 .w5.is-on { background: var(--green); }
 
@@ -1195,6 +1223,7 @@ input, textarea, select { font: inherit; font-size: 17px; color: inherit; }
   .tree-cap { font-size: 13.5px; padding: 0 11px; white-space: nowrap; }
   .tree-stage { font-size: 12px; white-space: nowrap; }
   .step-card-actions .btn { font-size: 15.5px; }
+  .screen .sticky-actions { margin-left: -16px; margin-right: -16px; padding-left: 16px; padding-right: 16px; }
 }
 
 @media (max-height: 700px) {

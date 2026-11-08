@@ -16,6 +16,8 @@ export const GRACE_DAYS = 2;
 export const DEPOSIT_PARTS = 4;
 /** A deposit week counts (its part is returned) if it has at least this many days with a step or a card. */
 export const WEEK_MIN_DAYS = 5;
+/** After a deposit the person can cancel and get everything back within this many hours; then the stake is locked. */
+export const CANCEL_HOURS = 24;
 export const DEPOSIT_AMOUNTS = [100, 200, 300];
 
 const blank = () => ({
@@ -42,7 +44,12 @@ let state = read();
 function read() {
   try {
     const raw = localStorage.getItem(KEY);
-    if (raw) return { ...blank(), ...JSON.parse(raw) };
+    if (raw) {
+      const saved = { ...blank(), ...JSON.parse(raw) };
+      // v2.0 allowed a free withdrawal; such closed deposits are dropped in the locked-stake model.
+      if (saved.deposit?.status === 'returned') saved.deposit = null;
+      return saved;
+    }
   } catch { /* storage unavailable: fall back to memory */ }
   return blank();
 }
@@ -154,25 +161,25 @@ export function dayStatus(k, s = state) {
   return d > 0 ? 'skipped' : 'future';
 }
 
-export const hasActiveDeposit = (s = state) => s.deposit?.status === 'active';
+export const hasActiveDeposit = (s = state) => Boolean(s.deposit);
 
 /**
- * Weekly return math for the deposit: each 7-day block from the deposit day is one week.
+ * Weekly return math for the deposit (a 4-week stake): each 7-day block from the deposit day is one week.
  * A week with ≥ WEEK_MIN_DAYS kept days (step or card) returns 1/DEPOSIT_PARTS of the amount;
- * otherwise that part goes to the fund the person chose.
+ * otherwise that part goes to the fund the person chose. Within CANCEL_HOURS of the deposit
+ * (simulated clock) the whole stake can be cancelled; after that it is locked until the last week ends.
  */
 export function depositSummary(s = state) {
   const d = s.deposit;
   if (!d) return null;
   const today = todayKey();
-  const end = d.status === 'returned' ? d.closedDay : today;
   const part = Math.round(d.amount / DEPOSIT_PARTS);
   const keptIn = (from, n) => {
     let c = 0;
     for (let i = 0; i < n; i++) if (s.days[addDays(from, i)]) c++;
     return c;
   };
-  const weeksDone = Math.min(DEPOSIT_PARTS, Math.max(0, Math.floor(diffDays(d.startDay, end) / 7)));
+  const weeksDone = Math.min(DEPOSIT_PARTS, Math.max(0, Math.floor(diffDays(d.startDay, today) / 7)));
   let returned = 0;
   let fund = 0;
   const weekly = [];
@@ -182,17 +189,20 @@ export function depositSummary(s = state) {
     if (ok) returned += part; else fund += part;
     weekly.push({ day: addDays(d.startDay, (w + 1) * 7), kept, ok, amount: part });
   }
-  const paidOut = d.events.filter((e) => e.kind === 'out').reduce((sum, e) => sum + e.amount, 0);
-  const running = d.status === 'active' && weeksDone < DEPOSIT_PARTS;
+  const running = weeksDone < DEPOSIT_PARTS;
+  const cancelLeftMs = Math.max(0, (d.at || 0) + CANCEL_HOURS * 3600e3 - simNow().getTime());
   const weekStart = addDays(d.startDay, weeksDone * 7);
   const elapsed = running ? Math.min(7, diffDays(weekStart, today) + 1) : 0;
   const weekKept = running ? keptIn(weekStart, elapsed) : 0;
   const weekLeft = running ? 7 - elapsed : 0;
   return {
-    amount: d.amount, part, returned: returned + paidOut, fund, weekly, status: d.status,
-    balance: d.status === 'returned' ? 0 : d.amount - returned - fund,
+    amount: d.amount, part, returned, fund, weekly,
+    balance: d.amount - returned - fund,
     nextDay: running ? addDays(d.startDay, (weeksDone + 1) * 7) : null,
     weekKept, weekLeft, weekReachable: weekKept + weekLeft >= WEEK_MIN_DAYS,
+    canCancel: cancelLeftMs > 0,
+    cancelLeftMs,
+    lockedUntil: addDays(d.startDay, DEPOSIT_PARTS * 7),
   };
 }
 
@@ -291,20 +301,20 @@ export function setDepositOffer(status) {
 export function acceptDeposit(amount) {
   mutate((s) => {
     const today = todayKey();
-    s.deposit = { amount, startDay: today, status: 'active', events: [{ day: today, kind: 'in', amount, text: `Покладено ${amount} грн` }] };
+    s.deposit = { amount, startDay: today, at: simNow().getTime(), events: [{ day: today, kind: 'in', amount, text: `Покладено ${amount} грн` }] };
     s.depositOffer = 'accepted';
   });
 }
 
-export function returnAll() {
+/** Cancels the stake within the 24-hour window: the whole sum comes back and the safe is empty. */
+export function cancelDeposit() {
   const sum = depositSummary();
-  if (!sum || sum.status !== 'active') return;
+  if (!sum?.canCancel) return false;
   mutate((s) => {
-    const today = todayKey();
-    s.deposit.events.push({ day: today, kind: 'out', amount: sum.balance, text: `Повернуто все: ${sum.balance} грн` });
-    s.deposit.status = 'returned';
-    s.deposit.closedDay = today;
+    s.deposit = null;
+    s.depositOffer = 'declined';
   });
+  return true;
 }
 
 /* ---------- moderator scenarios ---------- */
@@ -334,6 +344,7 @@ export function rewindToDay(n) {
     if (hasActiveDeposit(s) && n > 3) {
       const shift = diffDays(s.deposit.startDay, addDays(start, 2));
       s.deposit.startDay = addDays(s.deposit.startDay, shift);
+      s.deposit.at += shift * 864e5;
       s.deposit.events.forEach((e) => { e.day = addDays(e.day, shift); });
     } else {
       s.deposit = null;

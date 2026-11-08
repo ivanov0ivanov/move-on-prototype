@@ -37,7 +37,7 @@ export function openModerator() {
   function renderScenario() {
     const s = getState();
     const st = getStats();
-    const dep = s.deposit?.status === 'active' ? `депозит ${s.deposit.amount} грн` : `пропозиція: ${s.depositOffer}`;
+    const dep = s.deposit ? `ставка ${s.deposit.amount} грн` : `пропозиція: ${s.depositOffer}`;
     return h('section', { class: 'svc-sec' },
       h('p', { class: 'svc-title' }, 'Сценарій'),
       h('p', { class: 'svc-status' }, st.started

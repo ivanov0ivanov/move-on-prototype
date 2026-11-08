@@ -5,22 +5,23 @@
 import { h, icon, plural, shortDate, toast, openSheet, ProtoNote } from '../ui.js';
 import {
   getState, getStats, acceptDeposit, setDepositOffer, depositSummary,
-  DEPOSIT_AMOUNTS, DEPOSIT_PARTS, CARDS_PER_MONTH, WEEK_MIN_DAYS,
+  DEPOSIT_AMOUNTS, DEPOSIT_PARTS, CARDS_PER_MONTH, WEEK_MIN_DAYS, CANCEL_HOURS,
 } from '../state.js';
 import { navigate } from '../router.js';
 
-/** The deposit rules: the single source of the rule copy for the offer and the Сейф tab. */
+/** The stake rules: the single source of rule copy for the offer, the confirmation sheet and the Сейф tab. */
+export const DEPOSIT_RULES = [
+  ['bank', 'Гроші лежать на окремому рахунку банку-партнера. Назву банку й договір покажемо перед першим внеском (у прототипі демо).'],
+  ['coins', `Ставка на ${DEPOSIT_PARTS} тижні: щотижня повертається 1/${DEPOSIT_PARTS} суми, якщо в тижні ${WEEK_MIN_DAYS} днів із кроками.`],
+  ['card', `День без кроку можна закрити карткою прощення: ${CARDS_PER_MONTH} на місяць, одна картка = один день.`],
+  ['heart', `Якщо тиждень не набрав ${WEEK_MIN_DAYS} днів, його 1/${DEPOSIT_PARTS} іде у фонд, який ти обереш.`],
+  ['undo', `Передумати можна протягом ${CANCEL_HOURS} годин після внеску: повернемо все. Далі гроші повертаються лише за цими правилами.`],
+];
+
 export function DepositRules() {
-  const rules = [
-    ['bank', 'Гроші лежать на окремому рахунку банку-партнера. Назву банку й договір покажемо перед першим внеском (у прототипі демо).'],
-    ['coins', `Щотижня повертається 1/${DEPOSIT_PARTS} суми, якщо в тижні ${WEEK_MIN_DAYS} днів із кроками.`],
-    ['card', `День без кроку можна закрити карткою прощення: ${CARDS_PER_MONTH} на місяць, одна картка = один день.`],
-    ['heart', `Якщо тиждень не набрав ${WEEK_MIN_DAYS} днів, його 1/${DEPOSIT_PARTS} іде у фонд, який ти обереш.`],
-    ['undo', 'Забрати все можна будь-коли у вкладці «Сейф».'],
-  ];
   return h('section', { class: 'rules' },
     h('p', { class: 'rules-title' }, 'Як це працює'),
-    h('ul', { class: 'rules-list' }, rules.map(([ico, text]) => h('li', {}, h('span', { class: 'rule-ico' }, icon(ico, 20)), h('span', {}, text)))));
+    h('ul', { class: 'rules-list' }, DEPOSIT_RULES.map(([ico, text]) => h('li', {}, h('span', { class: 'rule-ico' }, icon(ico, 20)), h('span', {}, text)))));
 }
 
 /** Vault illustration; `drop` animates a coin falling into it. */
@@ -51,7 +52,7 @@ function Confirmation(amount) {
     h('ul', { class: 'done-list' },
       h('li', {}, icon('coins', 20), `${sum.part} грн повертається за кожен тиждень із ${WEEK_MIN_DAYS} днями кроків`),
       h('li', {}, icon('card', 20), `Картка прощення закриває один день, ${CARDS_PER_MONTH} на місяць`),
-      h('li', {}, icon('undo', 20), 'Забрати все можна будь-коли у вкладці «Сейф»')),
+      h('li', {}, icon('undo', 20), `Передумати можна протягом ${CANCEL_HOURS} годин: повернемо все`)),
     h('div', { class: 'deposit-actions' },
       h('button', { class: 'btn btn--primary', type: 'button', onClick: () => navigate('/safe') }, 'Відкрити сейф'),
       h('button', { class: 'btn btn--secondary', type: 'button', onClick: () => navigate('/home') }, 'На головну')),
@@ -66,23 +67,18 @@ function Confirmation(amount) {
 function openDepositConfirm(amount, onConfirm) {
   const part = Math.round(amount / DEPOSIT_PARTS);
   let sheet;
-  const terms = [
-    ['steps', `Тиждень зараховано, якщо в ньому ${WEEK_MIN_DAYS} днів із кроками`],
-    ['card', `Картка прощення закриває один день, ${CARDS_PER_MONTH} на місяць`],
-    ['heart', `Тиждень без ${WEEK_MIN_DAYS} днів: ${part} грн іде у фонд, який ти обереш`],
-    ['undo', 'Забрати все можна будь-коли у вкладці «Сейф»'],
-  ];
   const content = h('div', { class: 'sheet-body' },
     h('h2', { class: 'h2' }, 'Підтвердь внесок'),
     h('div', { class: 'confirm-amount' },
       h('p', { class: 'confirm-sum' }, `${amount} грн`),
       h('p', { class: 'confirm-sub' }, `повернення по ${part} грн щотижня, ${DEPOSIT_PARTS} тижні · банк-партнер (демо)`)),
     h('p', { class: 'terms-title' }, 'Умови'),
-    h('ul', { class: 'terms' }, terms.map(([ico, text]) => h('li', {}, icon(ico, 18), h('span', {}, text)))),
-    h('div', { class: 'deposit-actions' },
+    h('ul', { class: 'terms' }, DEPOSIT_RULES.map(([ico, text]) => h('li', {}, icon(ico, 18), h('span', {}, text)))),
+    // Sticky footer: both choices stay visible while the terms scroll, also on small phones.
+    h('div', { class: 'deposit-actions sticky-actions' },
       h('button', { class: 'btn btn--primary', type: 'button', onClick: () => { sheet.close('done'); onConfirm(); } }, 'Підтвердити (демо)'),
-      h('button', { class: 'btn btn--secondary', type: 'button', onClick: () => sheet.close('back') }, 'Назад')),
-    ProtoNote());
+      h('button', { class: 'btn btn--secondary', type: 'button', onClick: () => sheet.close('back') }, 'Назад'),
+      ProtoNote()));
   sheet = openSheet({ content, label: 'Підтвердження внеску' });
 }
 
@@ -115,7 +111,8 @@ export function DepositScreen() {
     h('p', { class: 'lead' }, `Поклади невелику суму в сейф. Вона повертається тобі щотижня, коли в тижні є ${WEEK_MIN_DAYS} днів із кроками.`),
     h('div', { class: 'amounts', role: 'radiogroup', 'aria-label': 'Сума внеску' }, chips),
     DepositRules(),
-    h('div', { class: 'deposit-actions' },
+    // Sticky footer: «Покласти…» and «Не зараз» are always visible and equally sized (no hidden decline).
+    h('div', { class: 'deposit-actions sticky-actions' },
       primary,
       h('button', {
         class: 'btn btn--secondary', type: 'button',
@@ -124,8 +121,8 @@ export function DepositScreen() {
           navigate('/home');
           toast('Добре. Сейф чекатиме у вкладці «Сейф»', { iconName: 'safe' });
         },
-      }, 'Не зараз')),
-    ProtoNote());
+      }, 'Не зараз'),
+      ProtoNote()));
 
   const el = h('section', { class: 'screen screen--deposit' }, offer);
   primary.addEventListener('click', () => {

@@ -1,24 +1,43 @@
 /**
- * "Сейф": deposit balance, returns, rules and history. Empty-state invitation until a deposit exists.
+ * "Сейф": the 4-week stake: balance, weekly returns, rules and history. Within 24 h of the deposit
+ * the stake can be cancelled; afterwards it is locked. Empty-state invitation until a deposit exists.
  */
 import { h, icon, Logo, shortDate, dayMonth, openSheet, toast, ProtoNote } from '../ui.js';
-import { getState, getStats, depositSummary, returnAll, WEEK_MIN_DAYS } from '../state.js';
+import { getState, getStats, depositSummary, cancelDeposit, WEEK_MIN_DAYS, DEPOSIT_PARTS, CANCEL_HOURS } from '../state.js';
 import { navigate, rerender } from '../router.js';
 import { DepositRules, Vault } from './deposit.js';
 
-function openReturnAll(balance) {
+/** "ще 23 год" / "ще 40 хв" for the cancel window. */
+const leftLabel = (ms) => (ms >= 3600e3 ? `ще ${Math.floor(ms / 3600e3)} год` : `ще ${Math.max(1, Math.ceil(ms / 60e3))} хв`);
+
+function openCancel(amount) {
   let sheet;
   const content = h('div', { class: 'sheet-body' },
-    h('h2', { class: 'h2' }, `Забрати ${balance} грн?`),
-    h('p', { class: 'sheet-sub' }, 'Гроші повернуться на картку протягом 1–3 днів (демо). Дерево, кроки й серія залишаться.'),
+    h('h2', { class: 'h2' }, `Передумати й повернути ${amount} грн?`),
+    h('p', { class: 'sheet-sub' }, `Від внеску минуло менше ${CANCEL_HOURS} годин, тож повернемо всю суму на картку (демо). Сейф стане порожнім. Дерево, кроки й серія залишаться.`),
     h('div', { class: 'deposit-actions' },
       h('button', {
         class: 'btn btn--primary', type: 'button',
-        onClick: () => { returnAll(); sheet.close('done'); rerender(); toast('Гроші повернено (демо)'); },
-      }, 'Забрати все'),
-      h('button', { class: 'btn btn--secondary', type: 'button', onClick: () => sheet.close('cancel') }, 'Скасувати')),
+        onClick: () => {
+          if (cancelDeposit()) toast(`Повернуто ${amount} грн (демо)`, { iconName: 'undo' });
+          sheet.close('done');
+          rerender();
+        },
+      }, `Так, повернути ${amount} грн`),
+      h('button', { class: 'btn btn--secondary', type: 'button', onClick: () => sheet.close('cancel') }, 'Залишити ставку')),
     ProtoNote());
-  sheet = openSheet({ content, label: 'Повернення депозиту' });
+  sheet = openSheet({ content, label: 'Скасування ставки' });
+}
+
+/** Cancel button inside the 24-hour window, otherwise the locked-stake line. */
+function StakeStatus(sum) {
+  if (sum.canCancel) {
+    return h('section', { class: 'cancel-box' },
+      h('button', { class: 'btn btn--secondary', type: 'button', onClick: () => openCancel(sum.amount) }, icon('undo', 20), 'Передумати й повернути все'),
+      h('p', { class: 'micro center' }, `Можна протягом ${CANCEL_HOURS} годин після внеску: ${leftLabel(sum.cancelLeftMs)}`));
+  }
+  return h('p', { class: 'stake-note' }, icon('lock', 18),
+    `Гроші заблоковано до ${dayMonth(sum.lockedUntil)}; повертаються щотижня за правилами.`);
 }
 
 function History(s, sum) {
@@ -52,15 +71,13 @@ function NextReturn(sum) {
       h('p', { class: 'next-sub' }, status)));
 }
 
-function Empty(st, sum) {
+function Empty(st) {
   const ready = st.streak >= 3;
   return [
     h('section', { class: 'safe-empty' },
       Vault(),
-      h('h2', { class: 'h2 center' }, sum?.status === 'returned' ? `Повернено ${sum.returned} грн` : 'Тут можна поставити на себе'),
-      h('p', { class: 'muted center' }, sum?.status === 'returned'
-        ? 'Сейф порожній. Покласти суму знову можна будь-коли, коли буде серія з 3 днів.'
-        : `Невелика сума, 100–300 грн. Вона повертається щотижня, коли в тижні є ${WEEK_MIN_DAYS} днів із кроками. Відкривається після 3 днів поспіль.`),
+      h('h2', { class: 'h2 center' }, 'Тут можна поставити на себе'),
+      h('p', { class: 'muted center' }, `Невелика ставка, 100–300 грн, на ${DEPOSIT_PARTS} тижні. Щотижня повертається 1/${DEPOSIT_PARTS}, коли в тижні є ${WEEK_MIN_DAYS} днів із кроками. Відкривається після 3 днів поспіль.`),
       ready
         ? h('button', { class: 'btn btn--primary', type: 'button', onClick: () => navigate('/deposit') }, 'Додати суму в сейф')
         : h('div', { class: 'unlock' },
@@ -75,9 +92,8 @@ export function SafeScreen() {
   const s = getState();
   const st = getStats();
   const sum = depositSummary();
-  const active = sum?.status === 'active';
 
-  const content = active ? [
+  const content = sum ? [
     h('section', { class: 'safe-card' },
       h('p', { class: 'safe-kicker' }, icon('safe', 18), 'У сейфі'),
       h('p', { class: 'safe-amount' }, `${sum.balance} грн`),
@@ -86,12 +102,12 @@ export function SafeScreen() {
       h('div', { class: 'safe-split' },
         h('p', {}, h('b', {}, `${sum.returned} грн`), h('span', {}, 'повернуто')),
         h('p', {}, h('b', {}, `${sum.fund} грн`), h('span', {}, 'у фонд')))),
+    StakeStatus(sum),
     sum.nextDay ? NextReturn(sum) : null,
     DepositRules(),
     History(s, sum),
-    h('button', { class: 'btn btn--outline', type: 'button', onClick: () => openReturnAll(sum.balance) }, icon('undo', 20), 'Забрати все'),
     ProtoNote(),
-  ] : Empty(st, sum);
+  ] : Empty(st);
 
   const el = h('section', { class: 'screen screen--safe has-tabbar' },
     h('header', { class: 'topbar' }, Logo()),
