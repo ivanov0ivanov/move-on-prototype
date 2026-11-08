@@ -1,0 +1,4 @@
+_screens/
+*.csv
+.DS_Store
+Thumbs.db
