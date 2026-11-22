@@ -3,7 +3,7 @@
  * stale-while-revalidate for app files and a runtime cache for Google Fonts. Offline-first.
  */
 
-const VERSION = 'v2.1.1';
+const VERSION = 'v2.1.2';
 const SHELL_CACHE = `moveon-shell-${VERSION}`;
 const FONT_CACHE = 'moveon-fonts-v1';
 
